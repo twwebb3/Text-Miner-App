@@ -37,10 +37,41 @@ phraseCreator<-function(df,commentCol,removeStopWords=FALSE,phraseLength=2){
   return(out)
 }
 
+
+gg.gauge <- function(pos,breaks=c(0,50,100)) {
+  require(ggplot2)
+  get.poly <- function(a,b,r1=0.5,r2=1.0) {
+    th.start <- pi*(1-a/100)
+    th.end   <- pi*(1-b/100)
+    th       <- seq(th.start,th.end,length=100)
+    x        <- c(r1*cos(th),rev(r2*cos(th)))
+    y        <- c(r1*sin(th),rev(r2*sin(th)))
+    return(data.frame(x,y))
+  }
+  ggplot()+ 
+    geom_polygon(data=get.poly(breaks[1],breaks[2]),aes(x,y),fill="#F8766D")+
+    geom_polygon(data=get.poly(breaks[2],breaks[3]),aes(x,y),fill="#00BFC4")+
+    geom_polygon(data=get.poly(pos-1,pos+1,0.2),aes(x,y))+
+    geom_text(data=as.data.frame(breaks), size=5, fontface="bold", vjust=0,
+              aes(x=1.1*cos(pi*(1-breaks/100)),y=1.1*sin(pi*(1-breaks/100)),label=paste0(c(-1,0,1))))+
+    annotate("text",x=0,y=0,label=paste0((pos-50)/50),vjust=0,size=8,fontface="bold")+
+    coord_fixed()+
+    theme_bw()+
+    theme(axis.text=element_blank(),
+          axis.title=element_blank(),
+          axis.ticks=element_blank(),
+          panel.grid=element_blank(),
+          panel.border=element_blank()) 
+}
+
 library(shiny)
 library(dplyr)
 library(tidytext)
 library(ggplot2)
+library(wordcloud)
+
+# Words that change the sentiment of the following word.
+sentimentChangeWords<-c("not","wouldn't","couldn't")
 
 # Define UI for application that draws a histogram
 ui <- fluidPage(
@@ -86,7 +117,12 @@ ui <- fluidPage(
       
       # Show a plot of the generated distribution
       mainPanel(
-         plotOutput("mainPlot")
+        column(6,plotOutput("wordPlot")),
+        column(6,plotOutput("phrasePlot")),
+        column(6,plotOutput("wordcloud")),
+        column(6,plotOutput("sentimentGauge"))
+        
+         
          #tableOutput("text1")
       )
    )
@@ -100,12 +136,28 @@ server <- function(input, output) {
   
    text<-reactive({
      req(input$file1)
-     read.csv(input$file1$datapath,
+     temp<-read.csv(input$file1$datapath,
                     header = input$header,
                     sep = input$sep,stringsAsFactors = F)
+     temp$key<-1:nrow(temp)
+     temp
    })
    
-   output$mainPlot <- renderPlot({
+   # Scores sentiment based on the entire comment
+   sentiment<-reactive({
+     text() %>% phraseCreator(input$selector2) %>%
+       left_join(get_sentiments("bing"),by=c('word.y'='word')) %>% mutate(score=case_when(
+         sentiment=="positive" ~ 1,
+         sentiment=="negative" ~ -1,
+         TRUE ~ 0
+       )) %>% mutate(score=case_when(
+         word.x %in% sentimentChangeWords ~ score*-1,
+         TRUE ~ score
+       )) %>% filter(score!=0) %>%
+       group_by(key) %>% summarise(sentiment=mean(score))
+   })
+   
+   output$wordPlot <- renderPlot({
       # generate bins based on input$bins from ui.R
      #if(input$text!="")
      {
@@ -113,7 +165,12 @@ server <- function(input, output) {
        {
          req(input$text)
          text<-data.frame(text=input$text,stringsAsFactors = F)
-         text %>% unnest_tokens(word,text) %>% inner_join(get_sentiments("bing")) %>%
+         text %>% phraseCreator("text") %>% left_join(get_sentiments("bing"),by=c("word.y"="word")) %>%
+           mutate(sentiment=case_when(
+             word.x %in% sentimentChangeWords & sentiment=="positive" ~ "negative",
+             word.x %in% sentimentChangeWords & sentiment=="negative" ~ "positive",
+             TRUE ~ sentiment
+           )) %>% mutate(word=word.y) %>% filter(!is.na(sentiment)) %>%
            count(sentiment,word) %>% mutate(topN=rank(desc(n),ties.method = "first")) %>% ungroup() %>%
            filter(topN<=30) %>% mutate(word=reorder(word,n)) %>%
            ggplot(aes(x=word,y=n,fill=sentiment)) + 
@@ -123,22 +180,129 @@ server <- function(input, output) {
        }else
        {
          req(input$file1)
-         text() %>% mutate(key=1:nrow(text())) %>%
-           phraseCreator(input$selector2,removeStopWords=TRUE) %>% 
-           left_join(get_sentiments("bing"),by=c("word.y","word")) %>%
-           mutate(score=case_when(
-             sentiment=="positive" ~ 1,
-             sentiment=="negative" ~ -1,
-             TRUE ~ 0
-           )) %>%
+         text() %>% phraseCreator(input$selector2,removeStopWords=TRUE) %>% 
+           left_join(sentiment()) %>% 
+           mutate(sentiment=case_when(
+             is.na(sentiment) ~ 0,
+             TRUE ~ sentiment
+           )) %>% group_by(word.y) %>%
+           summarise(sentiment=mean(sentiment),n=length(word.y)) %>% 
+           filter(!is.na(word.y)) %>%
+           mutate(topN=rank(desc(n),ties.method = "first")) %>% ungroup() %>%
+           filter(topN<=30) %>% mutate(word.y=reorder(word.y,n)) %>%
+           ggplot(aes(x=word.y,y=n,fill=sentiment)) + 
+           geom_col() +
+           coord_flip()
+       }
+       
+     }
+   })
+   
+   
+   
+   output$phrasePlot <- renderPlot({
+     # generate bins based on input$bins from ui.R
+     #if(input$text!="")
+     {
+       if(input$selector1=="paste")
+       {
+         req(input$text)
+         text<-data.frame(text=input$text,stringsAsFactors = F)
+         text %>% phraseCreator("text",phraseLength = 3) %>% left_join(get_sentiments("bing"),by=c("word.y"="word")) %>%
+           mutate(sentiment=case_when(
+             word.x %in% sentimentChangeWords & sentiment=="positive" ~ "negative",
+             word.x %in% sentimentChangeWords & sentiment=="negative" ~ "positive",
+             TRUE ~ sentiment
+           )) %>% mutate(phrase=paste(word.y,word,sep=" ")) %>% filter(!is.na(sentiment)) %>%
            count(sentiment,word) %>% mutate(topN=rank(desc(n),ties.method = "first")) %>% ungroup() %>%
            filter(topN<=30) %>% mutate(word=reorder(word,n)) %>%
            ggplot(aes(x=word,y=n,fill=sentiment)) + 
            geom_col(show.legend = FALSE) +
            facet_wrap(~sentiment, scales = "free") +
            coord_flip()
+       }else
+       {
+         req(text())
+         req(sentiment())
+         text() %>% phraseCreator(input$selector2,removeStopWords=TRUE) %>% 
+           left_join(sentiment()) %>% filter(!is.na(word.y)) %>% 
+           mutate(sentiment=case_when(
+             is.na(sentiment) ~ 0,
+             TRUE ~ sentiment
+           )) %>% group_by(phrase) %>%
+           summarise(sentiment=mean(sentiment),n=length(phrase)) %>% 
+           mutate(topN=rank(desc(n),ties.method = "first")) %>% ungroup() %>%
+           filter(topN<=30) %>% mutate(phrase=reorder(phrase,n)) %>%
+           ggplot(aes(x=phrase,y=n,fill=sentiment)) + 
+           geom_col() +
+           coord_flip()
        }
        
+     }
+   })
+   
+   
+   output$wordcloud<-renderPlot({
+     # Word clout plots
+     # issues: sometimes bottom words are cut out, fix the size of the wordcloud object?
+     {
+       if(input$selector1=="paste")
+       {
+         req(input$text)
+         text<-data.frame(text=input$text,stringsAsFactors = F)
+         temp<-text %>% phraseCreator("text") %>% left_join(get_sentiments("bing"),by=c("word.y"="word")) %>%
+           mutate(sentiment=case_when(
+             word.x %in% sentimentChangeWords & sentiment=="positive" ~ "negative",
+             word.x %in% sentimentChangeWords & sentiment=="negative" ~ "positive",
+             TRUE ~ sentiment
+           )) %>% mutate(word=word.y) %>% filter(!is.na(sentiment)) %>% filter(!is.na(word)) %>%
+           count(sentiment,word) %>% mutate(topN=rank(desc(n),ties.method = "first")) %>% ungroup() %>%
+           filter(topN<=50)
+         
+         wordcloud(temp$word,temp$n,min.freq=1,colors="#00BFC4")
+       }else
+       {
+         req(input$file1)
+         temp<-text() %>% phraseCreator(input$selector2,removeStopWords=TRUE) %>% 
+           left_join(sentiment()) %>% group_by(word.y) %>%
+           summarise(sentiment=mean(sentiment),n=length(word.y)) %>% 
+           filter(!is.na(word.y)) %>%
+           mutate(topN=rank(desc(n),ties.method = "first")) %>% ungroup() %>%
+           filter(topN<=50) %>% mutate(word=reorder(word.y,n))
+         
+         wordcloud(temp$word,temp$n,colors="#00BFC4")
+       }
+     }
+   })
+   
+   
+   output$sentimentGauge<-renderPlot({
+     # sentiment gauge
+     {
+       if(input$selector1=="paste")
+       {
+         req(input$text)
+         text<-data.frame(text=input$text,stringsAsFactors = F)
+         temp<-text %>% phraseCreator("text") %>% left_join(get_sentiments("bing"),by=c("word.y"="word")) %>%
+           mutate(sentiment=case_when(
+             word.x %in% sentimentChangeWords & sentiment=="positive" ~ "negative",
+             word.x %in% sentimentChangeWords & sentiment=="negative" ~ "positive",
+             TRUE ~ sentiment
+           )) %>% mutate(word=word.y) %>% filter(!is.na(sentiment)) %>% filter(!is.na(word)) %>%
+           mutate(score=case_when(
+             sentiment=="positive" ~ 1,
+             sentiment=="negative" ~ -1,
+             TRUE ~ 0
+           ))
+           
+         
+         gg.gauge(round(50*mean(temp$score)+50,2))
+       }else
+       {
+         req(input$file1)
+         
+         gg.gauge(round(50*mean(sentiment()$sentiment)+50,2))
+       }
      }
    })
    
