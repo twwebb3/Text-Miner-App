@@ -69,15 +69,22 @@ library(dplyr)
 library(tidytext)
 library(ggplot2)
 library(wordcloud)
+library(DT)
+library(shinydashboard)
 
 # Words that change the sentiment of the following word.
 sentimentChangeWords<-c("not","wouldn't","couldn't")
 
 # Define UI for application that draws a histogram
 ui <- fluidPage(
-   
+  
+  tags$style(type="text/css",
+             ".shiny-output-error { visibility: hidden; }",
+             ".shiny-output-error:before { visibility: hidden; }"
+  ), 
+  
    # Application title
-   titlePanel("Old Faithful Geyser Data"),
+   titlePanel("Text Miner"),
    
    # Sidebar with a slider input for number of bins 
    sidebarLayout(
@@ -111,16 +118,25 @@ ui <- fluidPage(
                        selected = ","),
           
           # Select which column contains the text
-          uiOutput("columnControls")
-        )
+          uiOutput("columnControls"),
+          
+          uiOutput("columnControls2")
+        ), width =2
       ),
       
       # Show a plot of the generated distribution
       mainPanel(
-        column(6,plotOutput("wordPlot")),
+        column(8,plotOutput("wordcloud",width="100%",height="500px")),
+        column(4,plotOutput("sentimentGauge")),
         column(6,plotOutput("phrasePlot")),
-        column(6,plotOutput("wordcloud")),
-        column(6,plotOutput("sentimentGauge"))
+        column(6,
+               box(
+                 title = NULL, width = NULL, status = "primary",
+                 div(style = 'height:475px; overflow-y: scroll;overflow-x: scroll', 
+                     DT::dataTableOutput('commentsTable'))
+               )
+               )
+        
         
          
          #tableOutput("text1")
@@ -277,7 +293,7 @@ server <- function(input, output) {
    
    
    output$sentimentGauge<-renderPlot({
-     # sentiment gauge
+     # sentiment gauge: shows sentiment on a scale of -1 to 1 (negative to positive)
      {
        if(input$selector1=="paste")
        {
@@ -306,11 +322,42 @@ server <- function(input, output) {
      }
    })
    
+   
+   output$commentsTable<-DT::renderDataTable({
+     # table showing comments
+     # need to make it filter based on clicks
+     {
+       req(text())
+       DT::datatable(data.frame(comments=text()[[input$selector2]],stringsAsFactors = F),
+                     options = list(dom = 't',pageLength=5000))
+     }
+   })
+   
+   
+   output$sentimentOverTime<-renderPlot({
+     # sentiment over time
+     timeSeries <- inner_join(text(),sentiment())
+     timeSeries[[input$dateSelector]]<-as.Date(timeSeries[[input$dateSelector]])
+     temp<-max(timeSeries[[input$dateSelector]])-min(timeSeries[[input$dateSelector]])
+     
+     if(temp/182>1)
+     {
+       
+     }
+   })
+   
    output$columnControls <- renderUI({
      req(input$file1)
      cnames=colnames(text())
      selectInput("selector2","Which column contains the text you would like to analyze?",
                  cnames,selected = cnames[1])
+   })
+   
+   output$columnControls2 <- renderUI({
+     req(input$file1)
+     cnames = colnames(text())
+     selectInput("dateSelector","Which column contains the dates?",
+                 cnames, selected = cnames[2])
    })
    
    output$text1 <- renderTable({
