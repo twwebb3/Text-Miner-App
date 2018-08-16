@@ -71,6 +71,7 @@ library(ggplot2)
 library(wordcloud)
 library(DT)
 library(shinydashboard)
+library(lubridate)
 
 # Words that change the sentiment of the following word.
 sentimentChangeWords<-c("not","wouldn't","couldn't")
@@ -126,6 +127,7 @@ ui <- fluidPage(
       
       # Show a plot of the generated distribution
       mainPanel(
+        column(12,plotOutput("sentimentTimeSeries")),
         column(8,plotOutput("wordcloud",width="100%",height="500px")),
         column(4,plotOutput("sentimentGauge")),
         column(6,plotOutput("phrasePlot")),
@@ -334,16 +336,25 @@ server <- function(input, output) {
    })
    
    
-   output$sentimentOverTime<-renderPlot({
+   output$sentimentTimeSeries<-renderPlot({
      # sentiment over time
      timeSeries <- inner_join(text(),sentiment())
-     timeSeries[[input$dateSelector]]<-as.Date(timeSeries[[input$dateSelector]])
-     temp<-max(timeSeries[[input$dateSelector]])-min(timeSeries[[input$dateSelector]])
+     timeSeries$date<-as.Date(timeSeries[[input$dateSelector]])
+     temp<-max(timeSeries$date[!is.na(timeSeries$date)])-min(timeSeries$date[!is.na(timeSeries$date)])
      
      if(temp/182>1)
      {
-       
+       timeSeries2 <- timeSeries %>% mutate(month=month(date),year=year(date)) %>% group_by(month,year) %>%
+         summarise(sentiment=mean(sentiment),date=min(date)) %>% arrange(date)
+     }else
+     {
+       timeSeries2 <- timeSeries %>% mutate(month=month(date),week=week(date)) %>% group_by(month,week) %>%
+         summarise(sentiment=mean(sentiment),date=min(date)) %>% arrange(date)
      }
+     
+     ggplot(timeSeries2,aes(x=date,y=sentiment))+
+       geom_line() + 
+       geom_smooth(method="loess")
    })
    
    output$columnControls <- renderUI({
@@ -371,3 +382,15 @@ server <- function(input, output) {
 # Run the application 
 shinyApp(ui = ui, server = server)
 
+#library(png)
+#library(grid)
+#img<-readPNG("Logo.png")
+#g<-rasterGrob(img,interpolate=TRUE)
+#image_read("https://github.com/twwebb3/Text-Miner-App/blob/master/Logo.png")
+
+#fcast$mean
+#fcast$x
+#out<-data.frame(fcast)
+#out$x<-1:nrow(out)
+#ggplot(out,aes(x=x,y=Point.Forecast)) +
+#  annotation_custom(g,xmin=-Inf,xmax=Inf,ymin=-Inf,ymax=Inf) + geom_line()
