@@ -118,20 +118,42 @@ ui <- fluidPage(
                                    Tab = "\t"),
                        selected = ","),
           
+          checkboxInput("time","Would you like sentiment trended?", FALSE),
+          
           # Select which column contains the text
           uiOutput("columnControls"),
+          conditionalPanel(
+            condition = "input.time == true",
+            uiOutput("columnControls2")
+          )#,
           
-          uiOutput("columnControls2")
+          #conditionalPanel(
+          #  condition = "input.time == true",
+          #  uiOutput("dateRange")
+          #)
         ), width =2
       ),
       
       # Show a plot of the generated distribution
       mainPanel(
-        column(12,plotOutput("sentimentTimeSeries")),
-        column(8,plotOutput("wordcloud",width="100%",height="500px")),
-        column(4,plotOutput("sentimentGauge")),
-        column(6,plotOutput("phrasePlot")),
+        conditionalPanel(
+          condition = "input.time == true",
+          
+          column(12,
+                 h3("Sentiment Trend"),
+                 plotOutput("sentimentTimeSeries"))
+        ),
+        column(8,
+               h3("Word Cloud"),
+               plotOutput("wordcloud",width="100%",height="500px")),
+        column(4,
+               h3("Sentiment Gauge"),
+               plotOutput("sentimentGauge")),
         column(6,
+               h3("Top Phrases"),
+               plotOutput("phrasePlot")),
+        column(6,
+               h3("Comments"),
                box(
                  title = NULL, width = NULL, status = "primary",
                  div(style = 'height:475px; overflow-y: scroll;overflow-x: scroll', 
@@ -152,6 +174,8 @@ server <- function(input, output) {
   # Sets maximum file size to 100 MB
   options(shiny.maxRequestSize=100*1024^2) 
   
+  
+  
    text<-reactive({
      req(input$file1)
      temp<-read.csv(input$file1$datapath,
@@ -160,6 +184,28 @@ server <- function(input, output) {
      temp$key<-1:nrow(temp)
      temp
    })
+   
+   #output$dateRange <- renderUI({
+  #   req(input$file1)
+  #   temp<-text()
+  #   temp$date<-as.Date(temp[[input$dateSelector]])
+  #   minDate<-min(temp$date[!is.na(temp$date)])
+  #   maxDate<-max(temp$date[!is.na(temp$date)])
+  #   sliderInput("dateRange",label = "Date Range", min = minDate,
+  #               max = maxDate, value = c(minDate,maxDate))
+  # })
+   
+   
+   #text2<-reactive({
+  #   req(input$file1)
+  #   temp<-text()
+  #   if(input$time)
+  #   {
+  #     temp$date<-as.Date(temp[[input$selector2]])
+  #     temp<-filter(temp,date>=input$dateRange[1],date<=input$dateRange[])
+  #   }
+  #   temp
+  # })
    
    # Scores sentiment based on the entire comment
    sentiment<-reactive({
@@ -331,7 +377,8 @@ server <- function(input, output) {
      {
        req(text())
        DT::datatable(data.frame(comments=text()[[input$selector2]],stringsAsFactors = F),
-                     options = list(dom = 't',pageLength=5000))
+                     options = list(dom = 't',pageLength=5000)) %>% 
+         DT::formatStyle(columns = colnames(.),fontSize="10pt")
      }
    })
    
@@ -370,6 +417,8 @@ server <- function(input, output) {
      selectInput("dateSelector","Which column contains the dates?",
                  cnames, selected = cnames[2])
    })
+   
+   
    
    output$text1 <- renderTable({
      req(input$file1)
